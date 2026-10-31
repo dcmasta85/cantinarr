@@ -11,7 +11,7 @@ import (
 // New jobs retain format checkpoints while observing the same authoritative
 // native import states as the legacy worker. Pending imports never age out.
 func (s *Service) sweepDeliveryImports() {
-	rows, err := s.db.Query(`SELECT DISTINCT r.id FROM request_log r JOIN request_dispatch d ON d.request_id=r.id WHERE r.status='pending' AND d.state='waiting_library' ORDER BY r.id`)
+	rows, err := s.db.Query(`SELECT DISTINCT r.id FROM request_log r JOIN request_dispatch d ON d.request_id=r.id WHERE r.status='pending' AND (d.state='waiting_library' OR (d.state='attention' AND d.code='import_identity_unresolved')) ORDER BY r.id`)
 	if err != nil {
 		return
 	}
@@ -64,11 +64,17 @@ func (s *Service) sweepDeliveryImports() {
 				}
 			}
 		}
+		// Recheck identity-unresolved attention rows on later sweeps. A
+		// provider alias or metadata fix can make a previously unresolved book
+		// identifiable; leaving it in attention forever would require a manual
+		// retry even after the underlying identity becomes resolvable. The
+		// update below is change-only, so an unresolved row does not emit a
+		// notification on every sweep.
 		tx, err := s.db.Begin()
 		if err != nil {
 			continue
 		}
-		_, err = tx.Exec(`UPDATE request_dispatch SET state=?,code=?,message=?,next_attempt_at=0,last_attempt_at=? WHERE request_id=? AND state='waiting_library' AND EXISTS(SELECT 1 FROM request_log WHERE id=? AND status='pending')`, state, code, deliveryMessage(state, code), time.Now().Unix(), id, id)
+		result, err := tx.Exec(`UPDATE request_dispatch SET state=?,code=?,message=?,next_attempt_at=0,last_attempt_at=? WHERE request_id=? AND (state='waiting_library' OR (state='attention' AND code='import_identity_unresolved')) AND (state<>? OR code<>?) AND EXISTS(SELECT 1 FROM request_log WHERE id=? AND status='pending')`, state, code, deliveryMessage(state, code), time.Now().Unix(), id, state, code, id)
 		if err == nil && state != "waiting_library" {
 			_, err = tx.Exec(`UPDATE request_log SET park_reason='delivery' WHERE id=? AND status='pending' AND park_reason='author_import'`, id)
 		}
@@ -77,6 +83,10 @@ func (s *Service) sweepDeliveryImports() {
 			continue
 		}
 		if tx.Commit() != nil {
+			continue
+		}
+		changed, _ := result.RowsAffected()
+		if changed == 0 {
 			continue
 		}
 		if state != "waiting_library" {

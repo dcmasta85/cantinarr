@@ -4700,29 +4700,6 @@ func (s *Service) probeParkedBookRequest(row parkedBookRow) {
 	}
 }
 
-// lookupParkedAuthorID resolves the author foreignAuthorId behind a parked
-// book via the exact id-term fetch. Returns ok=false on a read failure (leave
-// the park alone), and an empty id with ok=true when the fetch answered but
-// did not name this record (the alias shape the legacy lane handles).
-func (s *Service) lookupParkedAuthorID(client *chaptarr.Client, foreignID string) (string, bool) {
-	results, err := client.LookupBook(foreignID)
-	if err != nil {
-		log.Printf("request: lookup parked book %q author: %v", foreignID, err)
-		return "", false
-	}
-	foreignID = strings.TrimSpace(foreignID)
-	for i := range results {
-		if strings.TrimSpace(results[i].ForeignBookID) == foreignID {
-			id := strings.TrimSpace(results[i].ForeignAuthorID)
-			if id == "" && results[i].Author != nil {
-				id = strings.TrimSpace(results[i].Author.ForeignAuthorID)
-			}
-			return id, true
-		}
-	}
-	return "", true
-}
-
 // pendingImportWasCancelled reads the arr's own record of why a Failed row
 // stopped. Chaptarr has no distinct cancelled status — a cancel in its UI
 // marks the row Failed with LastError "Cancelled by user" — so this is the
