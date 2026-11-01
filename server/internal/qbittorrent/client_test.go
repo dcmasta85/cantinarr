@@ -98,6 +98,34 @@ func TestLoginOnceAndReuseCookie(t *testing.T) {
 	}
 }
 
+func TestTransferInfoNotFoundIsOptionalForCompatibleClients(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/torrents/info":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[{"name":"book","hash":"abc","size":10,"progress":0.5,"state":"downloading"}]`)
+		case "/api/v2/transfer/info":
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := NewAPIKeyClient(srv.URL, "test-key")
+	torrents, err := client.GetTorrents()
+	if err != nil || len(torrents) != 1 || torrents[0].Hash != "abc" {
+		t.Fatalf("GetTorrents() = %+v, %v; want torrent list despite missing global stats", torrents, err)
+	}
+	info, err := client.GetTransferInfo()
+	if err != nil {
+		t.Fatalf("GetTransferInfo() error = %v; want zero stats for unsupported endpoint", err)
+	}
+	if info.DLInfoSpeed != 0 || info.UPInfoSpeed != 0 || info.DLRateLimit != 0 {
+		t.Fatalf("GetTransferInfo() = %+v; want zero-valued unavailable stats", info)
+	}
+}
+
 // TestExpiredSessionTriggersReloginRetry pins the 403 recovery path: when the
 // stored cookie has expired, the client re-logs-in once and retries the call
 // instead of surfacing the 403.

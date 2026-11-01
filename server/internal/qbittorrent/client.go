@@ -339,8 +339,22 @@ type TransferInfo struct {
 // GetTransferInfo returns the global transfer state.
 func (c *Client) GetTransferInfo() (*TransferInfo, error) {
 	var info TransferInfo
-	if err := c.getJSON("/api/v2/transfer/info", &info); err != nil {
+	resp, err := c.do("GET", "/api/v2/transfer/info", nil)
+	if err != nil {
 		return nil, err
+	}
+	defer resp.Body.Close()
+	// Some qBittorrent-compatible clients (including Decypharr) do not
+	// implement this optional global-stats endpoint. Keep queue polling usable;
+	// per-torrent rates are still available from /torrents/info.
+	if resp.StatusCode == http.StatusNotFound {
+		return &info, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("qbittorrent /api/v2/transfer/info: status %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("qbittorrent decode /api/v2/transfer/info: %w", err)
 	}
 	return &info, nil
 }
