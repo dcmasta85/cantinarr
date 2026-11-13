@@ -1377,8 +1377,9 @@ func TestCanonicalSiblingFailsClosedOnConflictingAuthors(t *testing.T) {
 	}
 }
 
-func TestBookRequestMonitoredRecordIsIdempotent(t *testing.T) {
+func TestBookRequestMonitoredRecordTriggersSearch(t *testing.T) {
 	mutations := 0
+	searchCalls := 0
 	chaptarrServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -1386,6 +1387,9 @@ func TestBookRequestMonitoredRecordIsIdempotent(t *testing.T) {
 			_, _ = w.Write([]byte(`[{"id":7,"title":"Flock","foreignBookId":"flock","monitored":true,"mediaType":"audiobook","statistics":{"bookFileCount":0}}]`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/book/lookup":
 			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/command":
+			searchCalls++
+			_, _ = w.Write([]byte(`{"id":101,"name":"BookSearch","status":"queued"}`))
 		default:
 			if r.Method != http.MethodGet {
 				mutations++
@@ -1405,7 +1409,10 @@ func TestBookRequestMonitoredRecordIsIdempotent(t *testing.T) {
 		t.Fatalf("response = %#v, want already requested audiobook", resp)
 	}
 	if mutations != 0 {
-		t.Fatalf("monitored record caused %d mutations, want idempotent no-op", mutations)
+		t.Fatalf("monitored record caused %d unexpected mutations", mutations)
+	}
+	if searchCalls != 1 {
+		t.Fatalf("monitored unavailable record triggered %d searches, want 1", searchCalls)
 	}
 }
 

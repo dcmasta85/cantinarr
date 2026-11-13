@@ -6,6 +6,9 @@ import (
 )
 
 func TestListeningAppDefaultsValidateCloneAndRoundTrip(t *testing.T) {
+	if err := (ListeningApps{IOS: "audiobooth"}).Validate(); err != nil {
+		t.Fatalf("AudioBooth should be accepted for iPhone/iPad: %v", err)
+	}
 	h := &Handler{}
 	inst := &Instance{ServiceType: "audiobookshelf"}
 	apps := ListeningApps{IOS: "shelfplayer", Android: "theshelf"}

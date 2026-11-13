@@ -1591,6 +1591,11 @@ func (s *Service) addToChaptarr(r *resolvedRequest) (string, string, error) {
 		case available:
 			r.bookFormats[mediaType] = StatusAvailable
 		case monitored:
+			// The record is monitored but still has no files. Re-trigger the
+			// search so an existing monitored record cannot become a durable
+			// "requested" state with no download attempt (for example after a
+			// transient command failure or an older Cantinarr request).
+			_ = client.TriggerBookSearch(ids)
 			r.bookFormats[mediaType] = StatusRequested
 		default:
 			if err := client.SetBookMonitored(ids, true); err != nil {

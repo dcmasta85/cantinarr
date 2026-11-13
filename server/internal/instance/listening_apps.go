@@ -10,7 +10,7 @@ type ListeningApps struct {
 }
 
 func (a ListeningApps) Validate() error {
-	if a.IOS != "" && a.IOS != "browser" && a.IOS != "audiobookshelf" && a.IOS != "shelfplayer" {
+	if a.IOS != "" && a.IOS != "browser" && a.IOS != "audiobookshelf" && a.IOS != "audiobooth" && a.IOS != "shelfplayer" {
 		return fmt.Errorf("unsupported iPhone or iPad listening app")
 	}
 	if a.Android != "" && a.Android != "browser" && a.Android != "audiobookshelf" && a.Android != "theshelf" {

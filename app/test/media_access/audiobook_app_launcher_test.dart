@@ -44,6 +44,48 @@ void main() {
     expect(urls.single.toString(), 'shelfplayer://');
   });
 
+  test('AudioBooth opens its registered scheme at the home screen', () async {
+    final urls = <Uri>[];
+    final launcher = MediaAppLauncher(
+      platform: TargetPlatform.iOS,
+      isWeb: false,
+      launchExternal: (uri) async {
+        urls.add(uri);
+        return true;
+      },
+    );
+    expect(
+      await launcher.openAudiobook(
+        webUrl: _web,
+        apps: const ListeningApps(ios: 'audiobooth'),
+        title: 'Book',
+      ),
+      isTrue,
+    );
+    expect(urls.single.toString(), 'audiobooth://home');
+  });
+
+  test('unavailable AudioBooth falls back to the original browser URL',
+      () async {
+    final urls = <Uri>[];
+    final launcher = MediaAppLauncher(
+      platform: TargetPlatform.iOS,
+      isWeb: false,
+      launchExternal: (uri) async {
+        urls.add(uri);
+        return uri.scheme == 'https';
+      },
+    );
+    expect(
+      await launcher.openAudiobook(
+        webUrl: _web,
+        apps: const ListeningApps(ios: 'audiobooth'),
+      ),
+      isTrue,
+    );
+    expect(urls.map((uri) => uri.toString()), ['audiobooth://home', _web]);
+  });
+
   for (final failure in [false, PlatformException(code: 'missing_app')]) {
     test(
         'ShelfPlayer falls back through home to the exact browser link: $failure',

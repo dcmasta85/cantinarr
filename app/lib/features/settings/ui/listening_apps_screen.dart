@@ -95,7 +95,7 @@ class _PreferencesFormState extends ConsumerState<_PreferencesForm> {
           const SizedBox(height: 24),
           const Text('Install your chosen app and sign in to Audiobookshelf '
               'there first. ShelfPlayer opens a search for a verified book; '
-              'TheShelf and the Audiobookshelf app open their home screen. '
+              'AudioBooth, TheShelf, and the Audiobookshelf app open their home screen. '
               'Playback does not start automatically.'),
           const SizedBox(height: 12),
           const Text('If the app cannot open, Cantinarr opens Audiobookshelf '

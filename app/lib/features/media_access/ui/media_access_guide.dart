@@ -572,7 +572,7 @@ class _MediaAccessGuideState extends ConsumerState<MediaAccessGuide>
                 'app and sign in there first.',
             'On an available audiobook, Listen opens a verified copy in your '
                 'browser, a title search in ShelfPlayer, or the home screen '
-                'in TheShelf or the Audiobookshelf app. If several copies '
+                'in AudioBooth, TheShelf, or the Audiobookshelf app. If several copies '
                 'match, choose the one you want. Playback does not start automatically.',
             'Open is a general shortcut when a matching copy cannot be verified. '
                 'It does not mean the book is in the library. If your chosen app '

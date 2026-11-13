@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 enum ListeningApp {
   browser('browser', 'Browser'),
   audiobookshelf('audiobookshelf', 'Audiobookshelf'),
+  audioBooth('audiobooth', 'AudioBooth'),
   shelfplayer('shelfplayer', 'ShelfPlayer'),
   theShelf('theshelf', 'TheShelf');
 
@@ -20,7 +21,7 @@ enum ListeningApp {
         orElse: () => browser,
       );
 
-  static const ios = [browser, audiobookshelf, shelfplayer];
+  static const ios = [browser, audiobookshelf, audioBooth, shelfplayer];
   static const android = [browser, audiobookshelf, theShelf];
 }
 

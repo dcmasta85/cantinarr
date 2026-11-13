@@ -127,6 +127,18 @@ void main() {
     });
   }
 
+  testWidgets('AudioBooth can be selected on iPhone and iPad', (tester) async {
+    final service = _Service();
+    await _pump(tester, service);
+    await tester
+        .tap(find.widgetWithText(DropdownButtonFormField<String>, 'iPhone and iPad'));
+    await tester.pumpAndSettle();
+    expect(find.text('AudioBooth'), findsOneWidget);
+    await tester.tap(find.text('AudioBooth').last);
+    await tester.pumpAndSettle();
+    expect(service.saved.ios, 'audiobooth');
+  });
+
   testWidgets('a rejected save restores the saved selection', (tester) async {
     final service = _Service()..failSave = true;
     await _pump(tester, service);

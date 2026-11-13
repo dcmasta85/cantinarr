@@ -66,7 +66,12 @@ class MediaAppLauncher {
           );
           if (await _attempt(() => _launchExternal(search))) return true;
         }
-        final home = Uri.parse('${app.id}://');
+        // AudioBooth registers its custom scheme and ignores unknown routes,
+        // leaving its normal home screen open. Supply a host because iOS URL
+        // handlers may reject the empty-authority form (`audiobooth://`).
+        final home = app == ListeningApp.audioBooth
+            ? Uri.parse('audiobooth://home')
+            : Uri.parse('${app.id}://');
         if (await _attempt(() => _launchExternal(home))) return true;
       } else if (_platform == TargetPlatform.android) {
         // These clients can always be opened through their launcher activity.
