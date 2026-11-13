@@ -584,6 +584,17 @@ func (s *Service) GetUser(userID int64) (*User, error) {
 }
 
 func (s *Service) CreateConnectToken(createdBy int64, name, serverURL string) (*CreateConnectTokenResponse, error) {
+	return s.createConnectToken(createdBy, name, serverURL, false)
+}
+
+// CreateOIDCConnectToken creates a new Cantinarr account whose invitation can
+// only be completed through the configured OIDC provider. The invitation is
+// consumed atomically with identity binding in commitOIDCIdentity.
+func (s *Service) CreateOIDCConnectToken(createdBy int64, name, serverURL string) (*CreateConnectTokenResponse, error) {
+	return s.createConnectToken(createdBy, name, serverURL, true)
+}
+
+func (s *Service) createConnectToken(createdBy int64, name, serverURL string, requireOIDC bool) (*CreateConnectTokenResponse, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -607,8 +618,12 @@ func (s *Service) CreateConnectToken(createdBy int64, name, serverURL string) (*
 		if err != nil {
 			return nil, err
 		}
+	} else if requireOIDC {
+		// Provisioning is explicitly for a new person. Never attach a fresh
+		// identity to a pre-existing Cantinarr account by username.
+		return nil, ErrUserExists
 	}
-	response, err := issueConnectToken(tx, createdBy, userID, serverURL)
+	response, err := issueConnectToken(tx, createdBy, userID, serverURL, requireOIDC)
 	if err != nil {
 		return nil, err
 	}
@@ -642,7 +657,7 @@ func (s *Service) CreateImportUser(createdBy int64, name, serverURL string) (int
 	if err != nil {
 		return 0, nil, err
 	}
-	response, err := issueConnectToken(tx, createdBy, id, serverURL)
+	response, err := issueConnectToken(tx, createdBy, id, serverURL, false)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -655,7 +670,7 @@ func (s *Service) CreateImportUser(createdBy int64, name, serverURL string) (int
 
 func issueConnectToken(q interface {
 	Exec(string, ...any) (sql.Result, error)
-}, createdBy, userID int64, serverURL string) (*CreateConnectTokenResponse, error) {
+}, createdBy, userID int64, serverURL string, requireOIDC bool) (*CreateConnectTokenResponse, error) {
 
 	// Generate 32-byte random token (64 hex chars)
 	tokenBytes := make([]byte, 32)
@@ -676,8 +691,8 @@ func issueConnectToken(q interface {
 		return nil, fmt.Errorf("supersede previous connect tokens: %w", err)
 	}
 	_, err := q.Exec(
-		"INSERT INTO connect_tokens (token, user_id, created_by, expires_at) VALUES (?, ?, ?, ?)",
-		token, userID, createdBy, expiresAt,
+		"INSERT INTO connect_tokens (token, user_id, created_by, expires_at, require_oidc) VALUES (?, ?, ?, ?, ?)",
+		token, userID, createdBy, expiresAt, requireOIDC,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert connect token: %w", err)
@@ -734,8 +749,8 @@ func (s *Service) RedeemConnectToken(token, deviceName, hardwareID string) (*Tok
 	defer s.policyMu.Unlock()
 	var ct ConnectToken
 	err := s.db.QueryRow(
-		"SELECT token, user_id, created_by, expires_at, redeemed_at FROM connect_tokens WHERE token = ?", token,
-	).Scan(&ct.Token, &ct.UserID, &ct.CreatedBy, &ct.ExpiresAt, &ct.RedeemedAt)
+		"SELECT token, user_id, created_by, expires_at, redeemed_at, require_oidc FROM connect_tokens WHERE token = ?", token,
+	).Scan(&ct.Token, &ct.UserID, &ct.CreatedBy, &ct.ExpiresAt, &ct.RedeemedAt, &ct.RequireOIDC)
 	if err != nil {
 		return nil, ErrTokenNotFound
 	}
@@ -744,6 +759,9 @@ func (s *Service) RedeemConnectToken(token, deviceName, hardwareID string) (*Tok
 	}
 	if time.Now().After(ct.ExpiresAt) {
 		return nil, ErrTokenExpired
+	}
+	if ct.RequireOIDC {
+		return nil, ErrSSORequired
 	}
 
 	if err := s.requireConnectSignIn(); err != nil {

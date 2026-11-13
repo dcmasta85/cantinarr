@@ -39,6 +39,7 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
   bool _isLoading = true;
   int _statusRevision = 0;
   bool _mediaActionBusy = false;
+  bool _provisioningBusy = false;
   String? _error;
   ServerStatus? _serverStatus;
   String _sharedAiProvider = '';
@@ -74,10 +75,12 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     try {
       final users = await ref.read(authProvider.notifier).listUsers();
       try {
-        final response =
-            await ref.read(backendClientProvider).get('/api/auth/status');
+        final response = await ref
+            .read(backendClientProvider)
+            .get('/api/auth/status');
         _serverStatus = ServerStatus.fromJson(
-            Map<String, dynamic>.from(response.data as Map));
+          Map<String, dynamic>.from(response.data as Map),
+        );
       } catch (_) {
         _serverStatus = null;
       }
@@ -95,8 +98,9 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       var mediaAccountsFailed = false;
       if (_mediaServers.isNotEmpty) {
         try {
-          mediaAccounts =
-              await ref.read(mediaAccessServiceProvider).listAccounts();
+          mediaAccounts = await ref
+              .read(mediaAccessServiceProvider)
+              .listAccounts();
         } catch (_) {
           mediaAccountsFailed = true;
         }
@@ -132,9 +136,11 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
             content: Text(
               newRole == 'admin'
                   ? context.l10n.settingsMessageValue1IsNowAnAdmin(
-                      (user.username).toString())
+                      (user.username).toString(),
+                    )
                   : context.l10n.settingsMessageValue1IsNowAUser(
-                      (user.username).toString()),
+                      (user.username).toString(),
+                    ),
             ),
           ),
         );
@@ -143,8 +149,10 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(
-                  _friendlyError(e, context.l10n.settingsFailedToChangeRole))),
+            content: Text(
+              _friendlyError(e, context.l10n.settingsFailedToChangeRole),
+            ),
+          ),
         );
       }
     }
@@ -162,7 +170,8 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
         content: Text(
           context.l10n
                   .settingsMessageRemoveValue1ThisDeletesTheirAccountDevices(
-                      (user.username).toString()) +
+                    (user.username).toString(),
+                  ) +
               context.l10n.settingsAndAnyPendingInvitesThisCannotBeUndone +
               '${managed.isEmpty ? '' : context.l10n.settingsMessageCantinarrWillTurnOffTheirManagedServerAccess((managed).toString())}'
                   '${_supportsManagement ? context.l10n.settingsNNlinkedOnlyAccountsStayAsTheyAre : ''}'
@@ -190,16 +199,22 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(context.l10n
-                  .settingsMessageRemovedValue1((user.username).toString()))),
+            content: Text(
+              context.l10n.settingsMessageRemovedValue1(
+                (user.username).toString(),
+              ),
+            ),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(
-                  _friendlyError(e, context.l10n.settingsFailedToRemoveUser))),
+            content: Text(
+              _friendlyError(e, context.l10n.settingsFailedToRemoveUser),
+            ),
+          ),
         );
       }
     }
@@ -269,6 +284,217 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     );
   }
 
+  Future<void> _provisionNewUser() async {
+    final connection = ref.read(authProvider).valueOrNull?.connection;
+    if (connection == null) return;
+    final service = ref.read(authServiceProvider);
+    try {
+      var status = await service.identityProvisioningStatus(
+        connection.serverUrl,
+        connection.accessToken,
+      );
+      if (status['configured'] != true) {
+        final tokenController = TextEditingController();
+        final token = await showDialog<String>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Connect Authentik provisioning'),
+            content: TextField(
+              controller: tokenController,
+              autofocus: true,
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'Authentik API token',
+                helperText:
+                    'Use a narrowly scoped token allowed to create users and recovery links.',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () =>
+                    Navigator.pop(dialogContext, tokenController.text.trim()),
+                child: const Text('Save securely'),
+              ),
+            ],
+          ),
+        );
+        tokenController.dispose();
+        if (token == null || token.isEmpty || !mounted) return;
+        await service.saveIdentityProvisioningToken(
+          connection.serverUrl,
+          connection.accessToken,
+          token,
+        );
+        status['configured'] = true;
+      }
+      if (status['configured'] != true || !mounted) return;
+
+      final allowedGroups = (status['allowed_groups'] as List? ?? const [])
+          .map((value) => value.toString())
+          .toList();
+      final selectedGroups = <String>{};
+      final usernameController = TextEditingController();
+      final nameController = TextEditingController();
+      final emailController = TextEditingController();
+      final form = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: const Text('Create household user'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: usernameController,
+                    autofocus: true,
+                    autocorrect: false,
+                    decoration: const InputDecoration(
+                      labelText: 'Username',
+                      helperText:
+                          'Use the same username they will use at home.',
+                    ),
+                  ),
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Display name',
+                    ),
+                  ),
+                  TextField(
+                    controller: emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                      labelText: 'Email (optional)',
+                    ),
+                  ),
+                  if (allowedGroups.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Authentik groups required for SSO'),
+                    ),
+                    for (final group in allowedGroups)
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(group),
+                        value: selectedGroups.contains(group),
+                        onChanged: (selected) => setDialogState(() {
+                          if (selected == true) {
+                            selectedGroups.add(group);
+                          } else {
+                            selectedGroups.remove(group);
+                          }
+                        }),
+                      ),
+                  ],
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Authentik and Cantinarr accounts are created now. Jellyfin and Audiobookshelf accounts are created on their first successful SSO login when auto-registration is enabled there.',
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, {
+                  'username': usernameController.text.trim(),
+                  'name': nameController.text.trim(),
+                  'email': emailController.text.trim(),
+                  'groups': selectedGroups.toList(),
+                }),
+                child: const Text('Create accounts'),
+              ),
+            ],
+          ),
+        ),
+      );
+      usernameController.dispose();
+      nameController.dispose();
+      emailController.dispose();
+      if (form == null || !mounted) return;
+
+      setState(() => _provisioningBusy = true);
+      final result = await service.provisionIdentity(
+        connection.serverUrl,
+        connection.accessToken,
+        form['username'] ?? '',
+        form['name'] ?? '',
+        form['email'] ?? '',
+        (form['groups'] as List<dynamic>? ?? const []).cast<String>(),
+      );
+      await _loadUsers();
+      if (!mounted) return;
+      await _showProvisionedLinks(result);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_friendlyError(e, 'Could not provision this user.')),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _provisioningBusy = false);
+    }
+  }
+
+  Future<void> _showProvisionedLinks(Map<String, dynamic> result) async {
+    final recovery = result['recovery_link']?.toString() ?? '';
+    final connect = result['connect_link']?.toString() ?? '';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Accounts created for ${result['username']}'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Send both links to the user. The recovery link lets them set their Authentik password; the Cantinarr link completes identity binding through SSO. Media-server accounts appear after their first SSO login if auto-registration is enabled.',
+              ),
+              const SizedBox(height: 16),
+              const Text('Authentik setup link'),
+              SelectableText(recovery),
+              TextButton.icon(
+                onPressed: () =>
+                    Clipboard.setData(ClipboardData(text: recovery)),
+                icon: const Icon(Icons.copy),
+                label: const Text('Copy Authentik link'),
+              ),
+              const SizedBox(height: 8),
+              const Text('Cantinarr SSO connect link'),
+              SelectableText(connect),
+              TextButton.icon(
+                onPressed: () =>
+                    Clipboard.setData(ClipboardData(text: connect)),
+                icon: const Icon(Icons.copy),
+                label: const Text('Copy Cantinarr link'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _generateAndShowInviteLink(
     String username,
     String description,
@@ -276,17 +502,19 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     String? link;
     var originSource = '';
     try {
-      final resp = await ref.read(authProvider.notifier).generateConnectToken(
-            username,
-          );
+      final resp = await ref
+          .read(authProvider.notifier)
+          .generateConnectToken(username);
       link = resp.link;
       originSource = resp.originSource;
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(
-                  _friendlyError(e, context.l10n.settingsFailedToCreateLink))),
+            content: Text(
+              _friendlyError(e, context.l10n.settingsFailedToCreateLink),
+            ),
+          ),
         );
       }
       return;
@@ -296,22 +524,30 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     if (!mounted) return;
 
     final newLink = link;
-    final invitedUser =
-        _users?.where((user) => user.username == username).firstOrNull;
+    final invitedUser = _users
+        ?.where((user) => user.username == username)
+        .firstOrNull;
     final ssoRequired =
         _serverStatus?.ssoOnly == true && invitedUser?.isAdmin != true;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(context.l10n
-            .settingsMessageInviteLinkForValue1((username).toString())),
+        title: Text(
+          context.l10n.settingsMessageInviteLinkForValue1(
+            (username).toString(),
+          ),
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               '$description '
-              '${ssoRequired ? context.l10n.settingsMessageTheyContinueThroughValue1ToSignInThe((_serverStatus!.ssoProvider).toString()) : _serverStatus == null ? context.l10n.settingsSignInRequirementsCouldNotBeVerifiedYour : context.l10n.settingsItConnectsOneDeviceToTheirCantinarrAccount}',
+              '${ssoRequired
+                  ? context.l10n.settingsMessageTheyContinueThroughValue1ToSignInThe((_serverStatus!.ssoProvider).toString())
+                  : _serverStatus == null
+                  ? context.l10n.settingsSignInRequirementsCouldNotBeVerifiedYour
+                  : context.l10n.settingsItConnectsOneDeviceToTheirCantinarrAccount}',
               style: const TextStyle(color: AppTheme.textSecondary),
             ),
             const SizedBox(height: 12),
@@ -362,21 +598,25 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
   /// user's delivery.
   Future<void> _sendTestPush(UserSummary user) async {
     try {
-      final result =
-          await ref.read(pushServiceProvider).sendTestToUser(user.id);
+      final result = await ref
+          .read(pushServiceProvider)
+          .sendTestToUser(user.id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(localizedDescribePushTest(context, result,
-              username: user.username)),
+          content: Text(
+            localizedDescribePushTest(context, result, username: user.username),
+          ),
         ),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-                _friendlyError(e, context.l10n.settingsFailedToSendTestPush))),
+          content: Text(
+            _friendlyError(e, context.l10n.settingsFailedToSendTestPush),
+          ),
+        ),
       );
     }
   }
@@ -393,19 +633,23 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text(isPassword
-              ? context.l10n.settingsDisablePassword
-              : context.l10n.settingsDisablePasskeys),
+          title: Text(
+            isPassword
+                ? context.l10n.settingsDisablePassword
+                : context.l10n.settingsDisablePasskeys,
+          ),
           content: Text(
             isPassword
                 ? context.l10n
-                        .settingsMessageThisClearsValue1SPasswordTheyCanSet(
-                            (user.username).toString()) +
-                    context.l10n.settingsOneOnlyIfYouReEnableIt
+                          .settingsMessageThisClearsValue1SPasswordTheyCanSet(
+                            (user.username).toString(),
+                          ) +
+                      context.l10n.settingsOneOnlyIfYouReEnableIt
                 : context.l10n
-                        .settingsMessageThisDeletesValue1SPasskeysTheyLlNeed(
-                            (user.username).toString()) +
-                    context.l10n.settingsRegisterAgainIfYouReEnableThem,
+                          .settingsMessageThisDeletesValue1SPasskeysTheyLlNeed(
+                            (user.username).toString(),
+                          ) +
+                      context.l10n.settingsRegisterAgainIfYouReEnableThem,
           ),
           actions: [
             TextButton(
@@ -424,7 +668,9 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     }
 
     try {
-      await ref.read(authProvider.notifier).updateUserAuthMethods(
+      await ref
+          .read(authProvider.notifier)
+          .updateUserAuthMethods(
             user.id,
             passwordEnabled: passwordEnabled,
             passkeyEnabled: passkeyEnabled,
@@ -433,17 +679,24 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(context.l10n
-                  .settingsMessageUpdatedValue1SSignInMethods(
-                      (user.username).toString()))),
+            content: Text(
+              context.l10n.settingsMessageUpdatedValue1SSignInMethods(
+                (user.username).toString(),
+              ),
+            ),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(_friendlyError(
-                e, context.l10n.settingsFailedToUpdateSignInMethods)),
+            content: Text(
+              _friendlyError(
+                e,
+                context.l10n.settingsFailedToUpdateSignInMethods,
+              ),
+            ),
           ),
         );
       }
@@ -485,21 +738,23 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text(context.l10n.settingsMessageIncludeAiAccessForValue1(
-              (user.username).toString())),
+          title: Text(
+            context.l10n.settingsMessageIncludeAiAccessForValue1(
+              (user.username).toString(),
+            ),
+          ),
           content: Text(
             unconfigured
                 ? context.l10n.settingsNoSharedAiProviderIsSetUpYet
                 : codex
-                    ? context.l10n.settingsPromptsAndToolContextWillUseTheShared
-                    : grokOAuth
-                        ? context
-                            .l10n.settingsPromptsAndToolContextWillUseTheShared2
-                        : providerUnknown
-                            ? context.l10n
-                                .settingsCantinarrCouldNotConfirmWhichSharedProviderIs
-                            : context.l10n
-                                .settingsThisUserCanSendPromptsAndToolContext,
+                ? context.l10n.settingsPromptsAndToolContextWillUseTheShared
+                : grokOAuth
+                ? context.l10n.settingsPromptsAndToolContextWillUseTheShared2
+                : providerUnknown
+                ? context
+                      .l10n
+                      .settingsCantinarrCouldNotConfirmWhichSharedProviderIs
+                : context.l10n.settingsThisUserCanSendPromptsAndToolContext,
           ),
           actions: [
             TextButton(
@@ -534,19 +789,24 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(enabled
-              ? context.l10n.settingsMessageIncludedAiEnabledForValue1(
-                  (user.username).toString())
-              : context.l10n.settingsMessageIncludedAiRemovedForValue1(
-                  (user.username).toString())),
+          content: Text(
+            enabled
+                ? context.l10n.settingsMessageIncludedAiEnabledForValue1(
+                    (user.username).toString(),
+                  )
+                : context.l10n.settingsMessageIncludedAiRemovedForValue1(
+                    (user.username).toString(),
+                  ),
+          ),
         ),
       );
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_friendlyError(
-              error, context.l10n.settingsFailedToUpdateAiAccess)),
+          content: Text(
+            _friendlyError(error, context.l10n.settingsFailedToUpdateAiAccess),
+          ),
         ),
       );
     }
@@ -556,7 +816,9 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
   /// lists what the server reports, administrators marked as such; linking
   /// only records the connection and changes nothing on the server.
   Future<void> _linkMediaAccount(
-      UserSummary user, ServiceInstance server) async {
+    UserSummary user,
+    ServiceInstance server,
+  ) async {
     final choice = await showMediaServerLinkSheet(
       context,
       instanceId: server.id,
@@ -567,7 +829,9 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     if (choice == null || !mounted) return;
     final remote = choice.account;
     try {
-      final linked = await ref.read(mediaAccessServiceProvider).link(
+      final linked = await ref
+          .read(mediaAccessServiceProvider)
+          .link(
             userId: user.id,
             instanceId: server.id,
             remoteUserId: remote.id,
@@ -575,25 +839,33 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
           );
       await _loadUsers();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(context.l10n
-            .settingsMessageLinkedValue1OnValue2ToValue3Value4(
-                (remote.name).toString(),
-                (server.name).toString(),
-                (user.username).toString(),
-                (linked.plexIdentityError.isEmpty
-                        ? ''
-                        : context.l10n
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n.settingsMessageLinkedValue1OnValue2ToValue3Value4(
+              (remote.name).toString(),
+              (server.name).toString(),
+              (user.username).toString(),
+              (linked.plexIdentityError.isEmpty
+                      ? ''
+                      : context.l10n
                             .settingsMessagePlexSignInWasNotLinkedValue1(
-                                (linked.plexIdentityError).toString()))
-                    .toString())),
-      ));
+                              (linked.plexIdentityError).toString(),
+                            ))
+                  .toString(),
+            ),
+          ),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-            _mediaAccessError(e, context.l10n.settingsCouldnTLinkTheAccount)),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _mediaAccessError(e, context.l10n.settingsCouldnTLinkTheAccount),
+          ),
+        ),
+      );
     }
   }
 
@@ -604,42 +876,60 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     required bool enabled,
   }) async {
     try {
-      final service =
-          RequestSettingsService(backendDio: ref.read(backendClientProvider));
+      final service = RequestSettingsService(
+        backendDio: ref.read(backendClientProvider),
+      );
       final grants = await service.getUserInstanceGrants(user.id);
       final current = grants[server.serviceType] ?? const <String>[];
       final next = enabled
           ? {...current, server.id}.toList()
           : current.where((id) => id != server.id).toList();
-      await service
-          .updateUserInstanceGrants(user.id, {server.serviceType: next});
+      await service.updateUserInstanceGrants(user.id, {
+        server.serviceType: next,
+      });
       await _loadUsers();
       if (!mounted) return;
-      final pending = _mediaAccounts.any((account) =>
-          account.userId == user.id &&
-          account.instanceId == server.id &&
-          account.accessSyncPending);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(context.l10n
-            .settingsMessageTurnedValue1AccessInCantinarrValue2ForValue3(
-                (server.name).toString(),
-                (enabled ? context.l10n.settingsOn2 : context.l10n.settingsOff2)
-                    .toString(),
-                (user.username).toString(),
-                (pending
-                        ? context.l10n
-                            .settingsServerAccessChangePendingCantinarrWillRetry
-                        : '')
-                    .toString())),
-      ));
+      final pending = _mediaAccounts.any(
+        (account) =>
+            account.userId == user.id &&
+            account.instanceId == server.id &&
+            account.accessSyncPending,
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n
+                .settingsMessageTurnedValue1AccessInCantinarrValue2ForValue3(
+                  (server.name).toString(),
+                  (enabled
+                          ? context.l10n.settingsOn2
+                          : context.l10n.settingsOff2)
+                      .toString(),
+                  (user.username).toString(),
+                  (pending
+                          ? context
+                                .l10n
+                                .settingsServerAccessChangePendingCantinarrWillRetry
+                          : '')
+                      .toString(),
+                ),
+          ),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(_friendlyError(
-            e,
-            context.l10n.settingsMessageCouldnTChangeValue1Access(
-                (server.name).toString()))),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _friendlyError(
+              e,
+              context.l10n.settingsMessageCouldnTChangeValue1Access(
+                (server.name).toString(),
+              ),
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -656,10 +946,11 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
         title: Text(context.l10n.settingsUnlinkAccount),
         content: Text(
           context.l10n.settingsMessageCantinarrWillForgetThatValue1IsValue2On(
-                  (user.username).toString(),
-                  (account.remoteUsername).toString(),
-                  (server.name).toString(),
-                  (server.name).toString()) +
+                (user.username).toString(),
+                (account.remoteUsername).toString(),
+                (server.name).toString(),
+                (server.name).toString(),
+              ) +
               context.l10n.settingsLinkItExplicitlyToConnectItAgain,
         ),
         actions: [
@@ -682,82 +973,123 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
           .unlink(userId: user.id, instanceId: server.id);
       await _loadUsers();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(context.l10n
-            .settingsMessageUnlinkedValue1OnValue2FromValue3(
-                (account.remoteUsername).toString(),
-                (server.name).toString(),
-                (user.username).toString())),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n.settingsMessageUnlinkedValue1OnValue2FromValue3(
+              (account.remoteUsername).toString(),
+              (server.name).toString(),
+              (user.username).toString(),
+            ),
+          ),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-            _mediaAccessError(e, context.l10n.settingsCouldnTUnlinkTheAccount)),
-      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _mediaAccessError(e, context.l10n.settingsCouldnTUnlinkTheAccount),
+          ),
+        ),
+      );
     }
   }
 
-  Future<void> _setMediaManagement(UserSummary user, ServiceInstance server,
-      MediaServerAccountRow account) async {
+  Future<void> _setMediaManagement(
+    UserSummary user,
+    ServiceInstance server,
+    MediaServerAccountRow account,
+  ) async {
     final manage = !account.manageAccess;
     final remoteAction = server.serviceType == 'plex'
         ? (account.granted
-            ? context.l10n.settingsRestoreTheirPlexShareIfNeeded
-            : context.l10n.settingsRemoveTheirPlexShare)
+              ? context.l10n.settingsRestoreTheirPlexShareIfNeeded
+              : context.l10n.settingsRemoveTheirPlexShare)
         : (account.granted
-            ? context.l10n.settingsEnableThisAccount
-            : context.l10n.settingsDisableThisAccount);
+              ? context.l10n.settingsEnableThisAccount
+              : context.l10n.settingsDisableThisAccount);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(manage
-            ? context.l10n
-                .settingsMessageManageAccessOnValue1((server.name).toString())
-            : context.l10n.settingsStopManagingAccess),
-        content: Text(manage
-            ? context.l10n.settingsMessageCantinarrWillValue1ToMatchThisUserS(
-                (remoteAction).toString(),
-                (server.serviceType == 'plex'
-                        ? context.l10n
-                            .settingsRestoringARemovedPlexShareUsesThisServer
-                        : '')
-                    .toString())
-            : context.l10n.settingsMessageTheLinkAndAccountOnValue1StayAs(
-                (server.name).toString())),
+        title: Text(
+          manage
+              ? context.l10n.settingsMessageManageAccessOnValue1(
+                  (server.name).toString(),
+                )
+              : context.l10n.settingsStopManagingAccess,
+        ),
+        content: Text(
+          manage
+              ? context.l10n.settingsMessageCantinarrWillValue1ToMatchThisUserS(
+                  (remoteAction).toString(),
+                  (server.serviceType == 'plex'
+                          ? context
+                                .l10n
+                                .settingsRestoringARemovedPlexShareUsesThisServer
+                          : '')
+                      .toString(),
+                )
+              : context.l10n.settingsMessageTheLinkAndAccountOnValue1StayAs(
+                  (server.name).toString(),
+                ),
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(context.l10n.settingsCancel)),
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(context.l10n.settingsCancel),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(manage
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              manage
                   ? context.l10n.settingsManageAccess
-                  : context.l10n.settingsStopManaging)),
+                  : context.l10n.settingsStopManaging,
+            ),
+          ),
         ],
       ),
     );
     if (confirmed != true) return;
     try {
-      final result = await ref.read(mediaAccessServiceProvider).setManagement(
-          userId: user.id, instanceId: server.id, manageAccess: manage);
+      final result = await ref
+          .read(mediaAccessServiceProvider)
+          .setManagement(
+            userId: user.id,
+            instanceId: server.id,
+            manageAccess: manage,
+          );
       await _loadUsers();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
           content: Text(
-        result.accessSyncPending
-            ? context.l10n.settingsManagementSavedTheServerAccessChangeIsPending
-            : manage
+            result.accessSyncPending
+                ? context
+                      .l10n
+                      .settingsManagementSavedTheServerAccessChangeIsPending
+                : manage
                 ? context.l10n.settingsMessageCantinarrNowManagesAccessOnValue1(
-                    (server.name).toString())
+                    (server.name).toString(),
+                  )
                 : context.l10n.settingsMessageStoppedManagingAccessOnValue1(
-                    (server.name).toString()),
-      )));
+                    (server.name).toString(),
+                  ),
+          ),
+        ),
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(_mediaAccessError(
-              e, context.l10n.settingsCouldnTChangeAccountManagement))));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _mediaAccessError(
+              e,
+              context.l10n.settingsCouldnTChangeAccountManagement,
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -785,9 +1117,11 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.userId == null
-            ? context.l10n.settingsUsers
-            : context.l10n.settingsUserAccess),
+        title: Text(
+          widget.userId == null
+              ? context.l10n.settingsUsers
+              : context.l10n.settingsUserAccess,
+        ),
       ),
       body: CenteredContent(
         child: Column(
@@ -809,6 +1143,19 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                       onPressed: _isLoading ? null : _inviteNewUser,
                       icon: const Icon(Icons.person_add_outlined),
                       label: Text(context.l10n.settingsInviteUser),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _isLoading || _provisioningBusy
+                          ? null
+                          : _provisionNewUser,
+                      icon: _provisioningBusy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.admin_panel_settings_outlined),
+                      label: const Text('Create SSO user'),
                     ),
                   ],
                 ),
@@ -833,7 +1180,9 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
             Text(_error!, style: const TextStyle(color: AppTheme.error)),
             const SizedBox(height: 16),
             ElevatedButton(
-                onPressed: _loadUsers, child: Text(context.l10n.settingsRetry)),
+              onPressed: _loadUsers,
+              child: Text(context.l10n.settingsRetry),
+            ),
           ],
         ),
       );
@@ -844,7 +1193,8 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       final user = users.where((user) => user.id == widget.userId).firstOrNull;
       if (user == null) {
         return Center(
-            child: Text(context.l10n.settingsThisUserIsNoLongerAvailable));
+          child: Text(context.l10n.settingsThisUserIsNoLongerAvailable),
+        );
       }
       return RefreshIndicator(
         onRefresh: _loadUsers,
@@ -875,11 +1225,12 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
 
     final mediaServers =
         ref.watch(authProvider).valueOrNull?.connection?.mediaServerInstances ??
-            const <ServiceInstance>[];
+        const <ServiceInstance>[];
     // The notice takes the first row when the account read failed, so the
     // list still renders every user and the gap is named, not implied.
-    final showPlexHelp =
-        mediaServers.any((server) => server.serviceType == 'plex');
+    final showPlexHelp = mediaServers.any(
+      (server) => server.serviceType == 'plex',
+    );
     final failureRows = _mediaAccountsFailed ? 1 : 0;
     final noticeRows = failureRows + (showPlexHelp ? 1 : 0);
 
@@ -893,8 +1244,10 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
         itemBuilder: (context, index) {
           if (index < failureRows) {
             return ListTile(
-              leading:
-                  Icon(Icons.sync_problem_outlined, color: AppTheme.warning),
+              leading: Icon(
+                Icons.sync_problem_outlined,
+                color: AppTheme.warning,
+              ),
               title: Text(
                 context.l10n.settingsCouldnTLoadMediaServerAccountsPullTo,
                 style: TextStyle(color: AppTheme.warning, fontSize: 13),
@@ -905,9 +1258,11 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
             return ListTile(
               leading: Icon(Icons.info_outline, color: AppTheme.textSecondary),
               title: Text(
-                  context.l10n.settingsPlexLibraryAccessAndSignInAreSeparate),
+                context.l10n.settingsPlexLibraryAccessAndSignInAreSeparate,
+              ),
               subtitle: Text(
-                context.l10n
+                context
+                    .l10n
                     .settingsSendingALibraryInvitationRecordsTheMediaAccount,
               ),
             );
@@ -929,79 +1284,129 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     }
   }
 
-  Widget _mediaAccountActions(UserSummary user, ServiceInstance server,
-      MediaServerAccountRow? account) {
+  Widget _mediaAccountActions(
+    UserSummary user,
+    ServiceInstance server,
+    MediaServerAccountRow? account,
+  ) {
     if (account == null) {
-      return Wrap(spacing: 8, runSpacing: 8, children: [
-        OutlinedButton.icon(
-          onPressed: _mediaActionBusy ? null
-              : () => _runMediaAction(() => _linkMediaAccount(user, server)),
-          icon: const Icon(Icons.link),
-          label: Text(context.l10n.settingsMessageLinkValue1Account(
-              (mediaServerTypeLabel(server.serviceType)).toString())),
-        ),
-        if (server.serviceType != 'audiobookshelf' &&
-            ref.read(authProvider).valueOrNull?.connection?.mediaLibraryAvailability == true)
+      return Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
           OutlinedButton.icon(
-            onPressed: _mediaActionBusy ? null : () => _runMediaAction(() async {
-              final saved = await showDialog<bool>(context: context,
-                builder: (_) => LibraryAccessOnlyDialog(userId: user.id, initialProvider: server.serviceType));
-              if (saved == true && mounted) await _loadUsers();
-            }),
-            icon: const Icon(Icons.video_library_outlined),
-            label: Text(context.l10n.availabilityLibraryAccessOnly)),
-      ]);
-    }
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(
-        account.manageAccess && !account.administrator
-            ? context.l10n
-                .settingsMessageChangingThisCantinarrGrantAlsoChangesAccessOn(
-                    (server.name).toString())
-            : context.l10n
-                .settingsChangingThisCantinarrGrantLeavesServerAccessUnchanged,
-        style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-      ),
-      Wrap(spacing: 8, runSpacing: 8, children: [
-        TextButton.icon(
-          onPressed: _mediaActionBusy
-              ? null
-              : () => _runMediaAction(() =>
-                  _setMediaAccess(user, server, enabled: !account.granted)),
-          icon: Icon(account.granted
-              ? Icons.block_outlined
-              : Icons.play_circle_outline),
-          label: Text(context.l10n.settingsMessageTurnCantinarrAccessValue1(
-              (account.granted
-                      ? context.l10n.settingsOff2
-                      : context.l10n.settingsOn2)
-                  .toString())),
-        ),
-        if (_supportsManagement && !account.administrator)
-          TextButton.icon(
             onPressed: _mediaActionBusy
                 ? null
-                : () => _runMediaAction(
-                    () => _setMediaManagement(user, server, account)),
-            icon: const Icon(Icons.manage_accounts_outlined),
-            label: Text(account.manageAccess
-                ? context.l10n.settingsStopManagingServerAccess
-                : context.l10n.settingsManageServerAccess),
+                : () => _runMediaAction(() => _linkMediaAccount(user, server)),
+            icon: const Icon(Icons.link),
+            label: Text(
+              context.l10n.settingsMessageLinkValue1Account(
+                (mediaServerTypeLabel(server.serviceType)).toString(),
+              ),
+            ),
           ),
-        TextButton.icon(
-          onPressed: _mediaActionBusy
-              ? null
-              : () => _runMediaAction(
-                  () => _unlinkMediaAccount(user, server, account)),
-          icon: const Icon(Icons.link_off),
-          label: Text(context.l10n.settingsUnlinkAccount2),
+          if (server.serviceType != 'audiobookshelf' &&
+              ref
+                      .read(authProvider)
+                      .valueOrNull
+                      ?.connection
+                      ?.mediaLibraryAvailability ==
+                  true)
+            OutlinedButton.icon(
+              onPressed: _mediaActionBusy
+                  ? null
+                  : () => _runMediaAction(() async {
+                      final saved = await showDialog<bool>(
+                        context: context,
+                        builder: (_) => LibraryAccessOnlyDialog(
+                          userId: user.id,
+                          initialProvider: server.serviceType,
+                        ),
+                      );
+                      if (saved == true && mounted) await _loadUsers();
+                    }),
+              icon: const Icon(Icons.video_library_outlined),
+              label: Text(context.l10n.availabilityLibraryAccessOnly),
+            ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          account.manageAccess && !account.administrator
+              ? context.l10n
+                    .settingsMessageChangingThisCantinarrGrantAlsoChangesAccessOn(
+                      (server.name).toString(),
+                    )
+              : context
+                    .l10n
+                    .settingsChangingThisCantinarrGrantLeavesServerAccessUnchanged,
+          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
         ),
-      ]),
-    ]);
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            TextButton.icon(
+              onPressed: _mediaActionBusy
+                  ? null
+                  : () => _runMediaAction(
+                      () => _setMediaAccess(
+                        user,
+                        server,
+                        enabled: !account.granted,
+                      ),
+                    ),
+              icon: Icon(
+                account.granted
+                    ? Icons.block_outlined
+                    : Icons.play_circle_outline,
+              ),
+              label: Text(
+                context.l10n.settingsMessageTurnCantinarrAccessValue1(
+                  (account.granted
+                          ? context.l10n.settingsOff2
+                          : context.l10n.settingsOn2)
+                      .toString(),
+                ),
+              ),
+            ),
+            if (_supportsManagement && !account.administrator)
+              TextButton.icon(
+                onPressed: _mediaActionBusy
+                    ? null
+                    : () => _runMediaAction(
+                        () => _setMediaManagement(user, server, account),
+                      ),
+                icon: const Icon(Icons.manage_accounts_outlined),
+                label: Text(
+                  account.manageAccess
+                      ? context.l10n.settingsStopManagingServerAccess
+                      : context.l10n.settingsManageServerAccess,
+                ),
+              ),
+            TextButton.icon(
+              onPressed: _mediaActionBusy
+                  ? null
+                  : () => _runMediaAction(
+                      () => _unlinkMediaAccount(user, server, account),
+                    ),
+              icon: const Icon(Icons.link_off),
+              label: Text(context.l10n.settingsUnlinkAccount2),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
-  Widget _buildUserTile(UserSummary user,
-      {VoidCallback? onOpen, bool showMediaActions = true}) {
+  Widget _buildUserTile(
+    UserSummary user, {
+    VoidCallback? onOpen,
+    bool showMediaActions = true,
+  }) {
     final currentUserId = ref.read(authProvider).valueOrNull?.user?.id;
     final mediaServers = _mediaServers;
     return _UserTile(
@@ -1030,19 +1435,19 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       // the row's Child tag is re-read once it pops.
       onRequestSettings: () => context
           .push(
-        '/settings/users/${user.id}/request-settings'
-        '${user.isAdmin ? '?admin=1' : ''}',
-        extra: user.username,
-      )
+            '/settings/users/${user.id}/request-settings'
+            '${user.isAdmin ? '?admin=1' : ''}',
+            extra: user.username,
+          )
           .then((_) {
-        if (mounted) _loadUsers();
-      }),
+            if (mounted) _loadUsers();
+          }),
       onSetAuthMethods: ({bool? passwordEnabled, bool? passkeyEnabled}) =>
           _setAuthMethods(
-        user,
-        passwordEnabled: passwordEnabled,
-        passkeyEnabled: passkeyEnabled,
-      ),
+            user,
+            passwordEnabled: passwordEnabled,
+            passkeyEnabled: passkeyEnabled,
+          ),
       onSetSharedAiAccess: (enabled) => _setSharedAiAccess(user, enabled),
       sharedAiProvider: _sharedAiProvider,
       sharedAiConfigured: _sharedAiConfigured,
@@ -1084,18 +1489,18 @@ class _UserTile extends StatelessWidget {
   final List<ServiceInstance> mediaServers;
   final bool supportsManagement;
   final void Function(ServiceInstance server, MediaServerAccountRow account)
-      onSetManagement;
+  onSetManagement;
   final Map<String, MediaServerAccountRow> mediaAccounts;
   final void Function(ServiceInstance server) onLinkMediaAccount;
   final void Function(ServiceInstance server, bool enabled) onSetMediaAccess;
   final void Function(ServiceInstance server, MediaServerAccountRow account)
-      onUnlinkMediaAccount;
+  onUnlinkMediaAccount;
   final ValueChanged<String> onChangeRole;
   final VoidCallback onDelete;
   final VoidCallback onResendInvite;
   final VoidCallback onSendTestPush;
   final void Function({bool? passwordEnabled, bool? passkeyEnabled})
-      onSetAuthMethods;
+  onSetAuthMethods;
   final VoidCallback onRequestSettings;
   final ValueChanged<bool> onSetSharedAiAccess;
   final String sharedAiProvider;
@@ -1151,49 +1556,59 @@ class _UserTile extends StatelessWidget {
             ),
             if (user.ssoLinked)
               _Tag(
-                  label: context.l10n.settingsSsoLinked,
-                  color: AppTheme.available),
+                label: context.l10n.settingsSsoLinked,
+                color: AppTheme.available,
+              ),
             if (user.child)
               _Tag(label: context.l10n.settingsChild, color: AppTheme.info),
             if (user.hasPendingInvite)
               _Tag(
-                  label: context.l10n.settingsInvited,
-                  color: AppTheme.requested)
+                label: context.l10n.settingsInvited,
+                color: AppTheme.requested,
+              )
             else if (_needsInvite)
               _Tag(
-                  label: context.l10n.settingsInviteExpired,
-                  color: AppTheme.unavailable),
+                label: context.l10n.settingsInviteExpired,
+                color: AppTheme.unavailable,
+              ),
             _Tag(
               label: user.deviceCount == 1
                   ? context.l10n.settings1Device
                   : context.l10n.settingsMessageValue1Devices(
-                      (user.deviceCount).toString()),
+                      (user.deviceCount).toString(),
+                    ),
               color: user.deviceCount > 0
                   ? AppTheme.available
                   : AppTheme.unavailable,
             ),
             if (user.passwordEnabled)
               _Tag(
-                  label: context.l10n.settingsPassword,
-                  color: AppTheme.textSecondary),
+                label: context.l10n.settingsPassword,
+                color: AppTheme.textSecondary,
+              ),
             if (user.passkeyEnabled)
               _Tag(
-                  label: context.l10n.settingsPasskey,
-                  color: AppTheme.textSecondary),
+                label: context.l10n.settingsPasskey,
+                color: AppTheme.textSecondary,
+              ),
             if (user.sharedAiEnabled)
               _Tag(
-                  label: context.l10n.settingsAiIncluded,
-                  color: AppTheme.signal),
+                label: context.l10n.settingsAiIncluded,
+                color: AppTheme.signal,
+              ),
             if (user.plexEmail.isNotEmpty)
               _Tag(label: user.plexEmail, color: AppTheme.textSecondary),
             if (user.plexEmail.isNotEmpty &&
                 user.plexInvitedAt == null &&
-                !mediaServers.any((server) =>
-                    server.serviceType == 'plex' &&
-                    mediaAccounts.containsKey(server.id)))
+                !mediaServers.any(
+                  (server) =>
+                      server.serviceType == 'plex' &&
+                      mediaAccounts.containsKey(server.id),
+                ))
               _Tag(
-                  label: context.l10n.settingsAskedForPlexAccess,
-                  color: AppTheme.requested),
+                label: context.l10n.settingsAskedForPlexAccess,
+                color: AppTheme.requested,
+              ),
             // One tag per linked media-server account: the server's name
             // alone when the account name matches the Cantinarr username,
             // the remote name otherwise, and ": off" while access is off.
@@ -1203,20 +1618,22 @@ class _UserTile extends StatelessWidget {
                   label: supportsManagement
                       ? '${server.name}${account.remoteUsername == user.username ? '' : ' (${account.remoteUsername})'}: ${account.granted ? context.l10n.notificationGranted : context.l10n.settingsNoGrant} · ${mediaAccessLabel(context, account.managementLabel)} · ${mediaAccessLabel(context, account.accessLabel)}'
                       : account.disabled
-                          ? context.l10n.settingsMessageValue1Off(
-                              (server.name).toString())
-                          : account.remoteUsername == user.username
-                              ? server.name
-                              : '${server.name}: ${account.remoteUsername}',
-                  color: account.accessSyncPending ||
+                      ? context.l10n.settingsMessageValue1Off(
+                          (server.name).toString(),
+                        )
+                      : account.remoteUsername == user.username
+                      ? server.name
+                      : '${server.name}: ${account.remoteUsername}',
+                  color:
+                      account.accessSyncPending ||
                           !account.verified ||
                           account.pending == true ||
                           (server.serviceType == 'plex' &&
                               account.pending == null)
                       ? AppTheme.warning
                       : account.granted
-                          ? AppTheme.available
-                          : AppTheme.unavailable,
+                      ? AppTheme.available
+                      : AppTheme.unavailable,
                 ),
           ],
         ),
@@ -1294,7 +1711,9 @@ class _UserTile extends StatelessWidget {
       },
       itemBuilder: (context) => [
         PopupMenuItem(
-            value: 'sso', child: Text(context.l10n.settingsLinkedSignIn)),
+          value: 'sso',
+          child: Text(context.l10n.settingsLinkedSignIn),
+        ),
         PopupMenuItem(
           value: 'request_settings',
           child: ListTile(
@@ -1315,18 +1734,15 @@ class _UserTile extends StatelessWidget {
               !sharedAiConfigured && sharedAiProvider.isNotEmpty
                   ? context.l10n.settingsNoSharedProviderConfiguredYet
                   : sharedAiProvider == 'codex'
-                      ? context.l10n.settingsSharedOpenaiOauthAllowance
-                      : sharedAiProvider == 'grok_oauth'
-                          ? context.l10n.settingsSharedXaiGrokAllowance
-                          : sharedAiProvider.isEmpty
-                              ? context.l10n.settingsProviderStatusUnavailable
-                              : context.l10n.settingsServerProviderQuota,
+                  ? context.l10n.settingsSharedOpenaiOauthAllowance
+                  : sharedAiProvider == 'grok_oauth'
+                  ? context.l10n.settingsSharedXaiGrokAllowance
+                  : sharedAiProvider.isEmpty
+                  ? context.l10n.settingsProviderStatusUnavailable
+                  : context.l10n.settingsServerProviderQuota,
             ),
             trailing: IgnorePointer(
-              child: Switch(
-                value: user.sharedAiEnabled,
-                onChanged: (_) {},
-              ),
+              child: Switch(value: user.sharedAiEnabled, onChanged: (_) {}),
             ),
             contentPadding: EdgeInsets.zero,
           ),
@@ -1343,8 +1759,8 @@ class _UserTile extends StatelessWidget {
                 user.hasPendingInvite
                     ? context.l10n.settingsNewInviteLink
                     : (_needsInvite
-                        ? context.l10n.settingsReInvite
-                        : context.l10n.settingsIssueDeviceLink),
+                          ? context.l10n.settingsReInvite
+                          : context.l10n.settingsIssueDeviceLink),
               ),
               contentPadding: EdgeInsets.zero,
             ),
@@ -1358,19 +1774,28 @@ class _UserTile extends StatelessWidget {
             PopupMenuItem(
               value: 'media_access:${server.id}',
               child: ListTile(
-                leading: Icon(!account.granted
-                    ? Icons.play_circle_outline
-                    : Icons.block_outlined),
-                title: Text(!account.granted
-                    ? context.l10n.settingsMessageTurnValue1AccessOn(
-                        (server.name).toString())
-                    : context.l10n.settingsMessageTurnValue1AccessOff(
-                        (server.name).toString())),
+                leading: Icon(
+                  !account.granted
+                      ? Icons.play_circle_outline
+                      : Icons.block_outlined,
+                ),
+                title: Text(
+                  !account.granted
+                      ? context.l10n.settingsMessageTurnValue1AccessOn(
+                          (server.name).toString(),
+                        )
+                      : context.l10n.settingsMessageTurnValue1AccessOff(
+                          (server.name).toString(),
+                        ),
+                ),
                 subtitle: supportsManagement
-                    ? Text(account.manageAccess && !account.administrator
-                        ? context.l10n.settingsAlsoChangesServerAccess
-                        : context
-                            .l10n.settingsCantinarrOnlyServerAccessStaysTheSame)
+                    ? Text(
+                        account.manageAccess && !account.administrator
+                            ? context.l10n.settingsAlsoChangesServerAccess
+                            : context
+                                  .l10n
+                                  .settingsCantinarrOnlyServerAccessStaysTheSame,
+                      )
                     : null,
                 contentPadding: EdgeInsets.zero,
               ),
@@ -1380,11 +1805,15 @@ class _UserTile extends StatelessWidget {
                 value: 'media_manage:${server.id}',
                 child: ListTile(
                   leading: const Icon(Icons.manage_accounts_outlined),
-                  title: Text(account.manageAccess
-                      ? context.l10n.settingsMessageStopManagingValue1Access(
-                          (server.name).toString())
-                      : context.l10n.settingsMessageManageValue1Access(
-                          (server.name).toString())),
+                  title: Text(
+                    account.manageAccess
+                        ? context.l10n.settingsMessageStopManagingValue1Access(
+                            (server.name).toString(),
+                          )
+                        : context.l10n.settingsMessageManageValue1Access(
+                            (server.name).toString(),
+                          ),
+                  ),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
@@ -1392,8 +1821,11 @@ class _UserTile extends StatelessWidget {
               value: 'media_unlink:${server.id}',
               child: ListTile(
                 leading: const Icon(Icons.link_off),
-                title: Text(context.l10n.settingsMessageUnlinkValue1Account(
-                    (server.name).toString())),
+                title: Text(
+                  context.l10n.settingsMessageUnlinkValue1Account(
+                    (server.name).toString(),
+                  ),
+                ),
                 contentPadding: EdgeInsets.zero,
               ),
             ),
@@ -1402,8 +1834,11 @@ class _UserTile extends StatelessWidget {
               value: 'media_link:${server.id}',
               child: ListTile(
                 leading: const Icon(Icons.live_tv_outlined),
-                title: Text(context.l10n.settingsMessageLinkValue1Account2(
-                    (server.name).toString())),
+                title: Text(
+                  context.l10n.settingsMessageLinkValue1Account2(
+                    (server.name).toString(),
+                  ),
+                ),
                 contentPadding: EdgeInsets.zero,
               ),
             ),
@@ -1440,14 +1875,18 @@ class _UserTile extends StatelessWidget {
         // what survives a cleared browser.
         if (!user.isAdmin)
           PopupMenuItem(
-            value:
-                user.passwordEnabled ? 'disable_password' : 'enable_password',
+            value: user.passwordEnabled
+                ? 'disable_password'
+                : 'enable_password',
             child: ListTile(
               leading: Icon(
-                  user.passwordEnabled ? Icons.lock_outline : Icons.lock_open),
-              title: Text(user.passwordEnabled
-                  ? context.l10n.settingsDisablePassword2
-                  : context.l10n.settingsEnablePassword),
+                user.passwordEnabled ? Icons.lock_outline : Icons.lock_open,
+              ),
+              title: Text(
+                user.passwordEnabled
+                    ? context.l10n.settingsDisablePassword2
+                    : context.l10n.settingsEnablePassword,
+              ),
               subtitle: user.passwordEnabled
                   ? null
                   : Text(context.l10n.settingsLetsThemSignInOnTheWeb),
@@ -1459,9 +1898,11 @@ class _UserTile extends StatelessWidget {
             value: user.passkeyEnabled ? 'disable_passkey' : 'enable_passkey',
             child: ListTile(
               leading: const Icon(Icons.fingerprint),
-              title: Text(user.passkeyEnabled
-                  ? context.l10n.settingsDisablePasskeys2
-                  : context.l10n.settingsEnablePasskeys),
+              title: Text(
+                user.passkeyEnabled
+                    ? context.l10n.settingsDisablePasskeys2
+                    : context.l10n.settingsEnablePasskeys,
+              ),
               subtitle: user.passkeyEnabled
                   ? null
                   : Text(context.l10n.settingsLetsThemSignInOnTheWebHttps),
@@ -1473,8 +1914,10 @@ class _UserTile extends StatelessWidget {
             value: 'delete',
             child: ListTile(
               leading: Icon(Icons.delete_outline, color: AppTheme.error),
-              title: Text(context.l10n.settingsRemove,
-                  style: TextStyle(color: AppTheme.error)),
+              title: Text(
+                context.l10n.settingsRemove,
+                style: TextStyle(color: AppTheme.error),
+              ),
               contentPadding: EdgeInsets.zero,
             ),
           ),

@@ -261,8 +261,13 @@ func NewRouter(
 			r.With(auth.RequirePermission(auth.PermissionCredentialsManage)).Put("/discord-notifications", discordHandler)
 			r.With(auth.RequirePermission(auth.PermissionCredentialsManage)).Delete("/discord-notifications", discordHandler)
 			discordTestLimiter := auth.NewRateLimiter(3, time.Minute)
+			identityProvisionLimiter := auth.NewRateLimiter(5, time.Minute)
 			r.With(auth.RequirePermission(auth.PermissionCredentialsManage), discordTestLimiter.Middleware).Post("/discord-notifications/test", discordHandler)
 			r.With(auth.RequirePermission(auth.PermissionUsersManage)).Post("/connect-token", authHandler.HandleCreateConnectToken)
+			r.With(auth.RequirePermission(auth.PermissionUsersManage)).Get("/identity-provisioning", authHandler.IdentityProvisioningStatus)
+			r.With(auth.RequirePermission(auth.PermissionCredentialsManage)).Put("/identity-provisioning", authHandler.SaveIdentityProvisioningToken)
+			r.With(auth.RequirePermission(auth.PermissionCredentialsManage)).Delete("/identity-provisioning", authHandler.ClearIdentityProvisioningToken)
+			r.With(auth.RequirePermission(auth.PermissionUsersManage), identityProvisionLimiter.Middleware).Post("/users/provision", authHandler.ProvisionIdentity)
 			// The origin invite/passkey links are built from. Lives beside
 			// connect-token because that is the surface it exists for.
 			r.With(auth.RequirePermission(auth.PermissionUsersManage)).Get("/external-address", externalAddressHandler(serverSettings))

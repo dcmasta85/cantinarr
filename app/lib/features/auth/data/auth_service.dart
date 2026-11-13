@@ -17,27 +17,82 @@ class SSORequired implements Exception {
 }
 
 class AuthService {
-  Future<Map<String, dynamic>> externalSignInRequest(String server, String path,
-          {String method = 'GET',
-          String? accessToken,
-          Map<String, dynamic>? data}) =>
-      oidcRequest(server, path,
-          method: method, accessToken: accessToken, data: data);
+  Future<Map<String, dynamic>> identityProvisioningStatus(
+    String server,
+    String accessToken,
+  ) => oidcRequest(
+    server,
+    '/api/admin/identity-provisioning',
+    accessToken: accessToken,
+  );
 
-  Future<Map<String, dynamic>> oidcRequest(String server, String path,
-      {String method = 'GET',
-      String? accessToken,
-      Map<String, dynamic>? data}) async {
+  Future<void> saveIdentityProvisioningToken(
+    String server,
+    String accessToken,
+    String token,
+  ) async {
+    await oidcRequest(
+      server,
+      '/api/admin/identity-provisioning',
+      method: 'PUT',
+      accessToken: accessToken,
+      data: {'token': token},
+    );
+  }
+
+  Future<Map<String, dynamic>> provisionIdentity(
+    String server,
+    String accessToken,
+    String username,
+    String name,
+    String email,
+    List<String> groups,
+  ) => oidcRequest(
+    server,
+    '/api/admin/users/provision',
+    method: 'POST',
+    accessToken: accessToken,
+    data: {
+      'username': username,
+      'name': name,
+      if (email.isNotEmpty) 'email': email,
+      'groups': groups,
+    },
+  );
+
+  Future<Map<String, dynamic>> externalSignInRequest(
+    String server,
+    String path, {
+    String method = 'GET',
+    String? accessToken,
+    Map<String, dynamic>? data,
+  }) => oidcRequest(
+    server,
+    path,
+    method: method,
+    accessToken: accessToken,
+    data: data,
+  );
+
+  Future<Map<String, dynamic>> oidcRequest(
+    String server,
+    String path, {
+    String method = 'GET',
+    String? accessToken,
+    Map<String, dynamic>? data,
+  }) async {
     final dio = _createDio(server);
     try {
-      final response = await dio.request(path,
-          data: data,
-          options: Options(
-            method: method,
-            headers: {
-              if (accessToken != null) 'Authorization': 'Bearer $accessToken'
-            },
-          ));
+      final response = await dio.request(
+        path,
+        data: data,
+        options: Options(
+          method: method,
+          headers: {
+            if (accessToken != null) 'Authorization': 'Bearer $accessToken',
+          },
+        ),
+      );
       return response.data as Map<String, dynamic>;
     } finally {
       dio.close();
@@ -45,12 +100,14 @@ class AuthService {
   }
 
   Dio _createDio(String serverUrl) {
-    final dio = Dio(BaseOptions(
-      baseUrl: serverUrl,
-      connectTimeout: AppConfig.requestTimeout,
-      receiveTimeout: AppConfig.requestTimeout,
-      headers: {'Content-Type': 'application/json'},
-    ));
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: serverUrl,
+        connectTimeout: AppConfig.requestTimeout,
+        receiveTimeout: AppConfig.requestTimeout,
+        headers: {'Content-Type': 'application/json'},
+      ),
+    );
     final adapter = createAuthHttpClientAdapter();
     if (adapter != null) {
       dio.httpClientAdapter = adapter;
@@ -74,12 +131,15 @@ class AuthService {
     String hardwareId,
   ) async {
     final dio = _createDio(serverUrl);
-    final resp = await dio.post('/api/auth/setup', data: {
-      'username': username,
-      'password': password,
-      'device_name': deviceName,
-      if (hardwareId.isNotEmpty) 'hardware_id': hardwareId,
-    });
+    final resp = await dio.post(
+      '/api/auth/setup',
+      data: {
+        'username': username,
+        'password': password,
+        'device_name': deviceName,
+        if (hardwareId.isNotEmpty) 'hardware_id': hardwareId,
+      },
+    );
     return AuthResponse.fromJson(resp.data as Map<String, dynamic>);
   }
 
@@ -92,12 +152,15 @@ class AuthService {
     String hardwareId,
   ) async {
     final dio = _createDio(serverUrl);
-    final resp = await dio.post('/api/auth/login', data: {
-      'username': username,
-      'password': password,
-      'device_name': deviceName,
-      if (hardwareId.isNotEmpty) 'hardware_id': hardwareId,
-    });
+    final resp = await dio.post(
+      '/api/auth/login',
+      data: {
+        'username': username,
+        'password': password,
+        'device_name': deviceName,
+        if (hardwareId.isNotEmpty) 'hardware_id': hardwareId,
+      },
+    );
     return AuthResponse.fromJson(resp.data as Map<String, dynamic>);
   }
 
@@ -107,9 +170,10 @@ class AuthService {
     String refreshToken,
   ) async {
     final dio = _createDio(serverUrl);
-    final resp = await dio.post('/api/auth/refresh', data: {
-      'refresh_token': refreshToken,
-    });
+    final resp = await dio.post(
+      '/api/auth/refresh',
+      data: {'refresh_token': refreshToken},
+    );
     return AuthResponse.fromJson(resp.data as Map<String, dynamic>);
   }
 
@@ -121,11 +185,14 @@ class AuthService {
     String hardwareId,
   ) async {
     final dio = _createDio(serverUrl);
-    final resp = await dio.post('/api/auth/connect', data: {
-      'token': token,
-      'device_name': deviceName,
-      if (hardwareId.isNotEmpty) 'hardware_id': hardwareId,
-    });
+    final resp = await dio.post(
+      '/api/auth/connect',
+      data: {
+        'token': token,
+        'device_name': deviceName,
+        if (hardwareId.isNotEmpty) 'hardware_id': hardwareId,
+      },
+    );
     if ((resp.data as Map<String, dynamic>)['sso_required'] == true) {
       throw const SSORequired();
     }
@@ -134,10 +201,7 @@ class AuthService {
 
   /// Fetch the authenticated user's profile, including whether a password is
   /// set (`has_password`).
-  Future<UserProfile> fetchMe(
-    String serverUrl,
-    String accessToken,
-  ) async {
+  Future<UserProfile> fetchMe(String serverUrl, String accessToken) async {
     final dio = _createDio(serverUrl);
     final resp = await dio.get(
       '/api/auth/me',
@@ -176,10 +240,7 @@ class AuthService {
   }
 
   /// Fetch server configuration (TMDB key, available services, etc.).
-  Future<ServerConfig> fetchConfig(
-    String serverUrl,
-    String accessToken,
-  ) async {
+  Future<ServerConfig> fetchConfig(String serverUrl, String accessToken) async {
     final dio = _createDio(serverUrl);
     final resp = await dio.get(
       '/api/config',
@@ -338,7 +399,8 @@ class AuthService {
       options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
     );
     return BeginRegistrationResponse.fromJson(
-        resp.data as Map<String, dynamic>);
+      resp.data as Map<String, dynamic>,
+    );
   }
 
   /// Finish passkey registration (authenticated).
@@ -447,11 +509,11 @@ class AuthResponse {
   });
 
   factory AuthResponse.fromJson(Map<String, dynamic> json) => AuthResponse(
-        accessToken: json['access_token'] as String,
-        refreshToken: json['refresh_token'] as String,
-        user: UserProfile.fromJson(json['user'] as Map<String, dynamic>),
-        deviceId: json['device_id'] as String?,
-      );
+    accessToken: json['access_token'] as String,
+    refreshToken: json['refresh_token'] as String,
+    user: UserProfile.fromJson(json['user'] as Map<String, dynamic>),
+    deviceId: json['device_id'] as String?,
+  );
 }
 
 /// Response from connect token generation.
@@ -498,13 +560,13 @@ class DeviceInfo {
   });
 
   factory DeviceInfo.fromJson(Map<String, dynamic> json) => DeviceInfo(
-        id: json['id'] as String,
-        userId: json['user_id'] as int,
-        username: json['username'] as String,
-        deviceName: json['device_name'] as String,
-        createdAt: json['created_at'] as String,
-        lastSeenAt: json['last_seen_at'] as String,
-      );
+    id: json['id'] as String,
+    userId: json['user_id'] as int,
+    username: json['username'] as String,
+    deviceName: json['device_name'] as String,
+    createdAt: json['created_at'] as String,
+    lastSeenAt: json['last_seen_at'] as String,
+  );
 }
 
 /// Enriched user account returned by the admin users endpoint.
@@ -552,25 +614,26 @@ class UserSummary {
   bool get isAdmin => role == 'admin';
 
   factory UserSummary.fromJson(Map<String, dynamic> json) => UserSummary(
-        id: json['id'] as int,
-        ssoLinked: json['sso_linked'] as bool? ?? false,
-        username: json['username'] as String,
-        role: json['role'] as String,
-        permissions: (json['permissions'] as List<dynamic>?)
-                ?.map((p) => p as String)
-                .toList() ??
-            const [],
-        createdAt: json['created_at'] as String? ?? '',
-        deviceCount: json['device_count'] as int? ?? 0,
-        hasPassword: json['has_password'] as bool? ?? false,
-        passwordEnabled: json['password_enabled'] as bool? ?? false,
-        passkeyEnabled: json['passkey_enabled'] as bool? ?? false,
-        hasPendingInvite: json['has_pending_invite'] as bool? ?? false,
-        sharedAiEnabled: json['ai_shared_enabled'] as bool? ?? false,
-        child: json['child'] as bool? ?? false,
-        plexEmail: json['plex_email'] as String? ?? '',
-        plexInvitedAt: json['plex_invited_at'] as String?,
-      );
+    id: json['id'] as int,
+    ssoLinked: json['sso_linked'] as bool? ?? false,
+    username: json['username'] as String,
+    role: json['role'] as String,
+    permissions:
+        (json['permissions'] as List<dynamic>?)
+            ?.map((p) => p as String)
+            .toList() ??
+        const [],
+    createdAt: json['created_at'] as String? ?? '',
+    deviceCount: json['device_count'] as int? ?? 0,
+    hasPassword: json['has_password'] as bool? ?? false,
+    passwordEnabled: json['password_enabled'] as bool? ?? false,
+    passkeyEnabled: json['passkey_enabled'] as bool? ?? false,
+    hasPendingInvite: json['has_pending_invite'] as bool? ?? false,
+    sharedAiEnabled: json['ai_shared_enabled'] as bool? ?? false,
+    child: json['child'] as bool? ?? false,
+    plexEmail: json['plex_email'] as String? ?? '',
+    plexInvitedAt: json['plex_invited_at'] as String?,
+  );
 }
 
 /// Server-provided configuration returned after authentication.
@@ -652,7 +715,8 @@ class ServerConfig {
   });
 
   factory ServerConfig.fromJson(Map<String, dynamic> json) {
-    final instancesList = (json['instances'] as List<dynamic>?)
+    final instancesList =
+        (json['instances'] as List<dynamic>?)
             ?.map((i) => ServiceInstance.fromJson(i as Map<String, dynamic>))
             .toList() ??
         [];
@@ -662,7 +726,8 @@ class ServerConfig {
       serverVersion: json['version'] as String?,
       minAppVersion: json['min_app_version'] as String?,
       services: AvailableServices.fromJson(
-          json['services'] as Map<String, dynamic>? ?? {}),
+        json['services'] as Map<String, dynamic>? ?? {},
+      ),
       instances: instancesList,
       issuesEnabled: json['issues_enabled'] as bool? ?? false,
       allowReporting: json['allow_reporting'] as bool? ?? false,
@@ -671,7 +736,7 @@ class ServerConfig {
       metadataLanguageTags: json['metadata_language_tags'] == true,
       metadataLanguages:
           (json['metadata_languages'] as List?)?.whereType<String>().toList() ??
-              const [],
+          const [],
       mediaAccountManagement:
           json['media_account_management'] as bool? ?? false,
       mediaUserImportExplicitLinking:
@@ -688,8 +753,8 @@ class ServerConfig {
       downloadsActivity: json['downloads_activity'] as bool? ?? false,
       downloadsUserScope: json['downloads_user_scope'] as String? ?? 'all',
       cover4KBadges: json['cover_4k_badges'] as bool? ?? false,
-      hiddenDiscoverTabs:
-          (json['hidden_discover_tabs'] as List?)?.cast<String>(),
+      hiddenDiscoverTabs: (json['hidden_discover_tabs'] as List?)
+          ?.cast<String>(),
     );
   }
 }
@@ -716,10 +781,7 @@ class BeginLoginResponse {
   final Map<String, dynamic> options;
   final String sessionId;
 
-  const BeginLoginResponse({
-    required this.options,
-    required this.sessionId,
-  });
+  const BeginLoginResponse({required this.options, required this.sessionId});
 
   factory BeginLoginResponse.fromJson(Map<String, dynamic> json) =>
       BeginLoginResponse(
@@ -733,10 +795,7 @@ class PasskeySetupLinkResponse {
   final String link;
   final String expiresAt;
 
-  const PasskeySetupLinkResponse({
-    required this.link,
-    required this.expiresAt,
-  });
+  const PasskeySetupLinkResponse({required this.link, required this.expiresAt});
 
   factory PasskeySetupLinkResponse.fromJson(Map<String, dynamic> json) =>
       PasskeySetupLinkResponse(

@@ -592,6 +592,25 @@ func TestOIDCOnlyPolicyInvitationsAndRecovery(t *testing.T) {
 	}
 }
 
+func TestProvisionedInvitationRequiresOIDCWithoutGlobalSSOOnly(t *testing.T) {
+	f := newOIDCFixture(t)
+	invite, err := f.s.CreateOIDCConnectToken(f.admin.UserID, "fresh-sso-user", "http://localhost:8585")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(invite.Link)
+	token := u.Query().Get("token")
+	if _, err = f.s.RedeemConnectToken(token, "Phone", "device"); !errors.Is(err, ErrSSORequired) {
+		t.Fatalf("local redemption error = %v, want SSO required", err)
+	}
+	if _, err = f.s.oidcInvitation(token); err != nil {
+		t.Fatalf("OIDC-required token was consumed by rejected local redemption: %v", err)
+	}
+	if _, err = f.s.CreateOIDCConnectToken(f.admin.UserID, "fresh-sso-user", "http://localhost:8585"); !errors.Is(err, ErrUserExists) {
+		t.Fatalf("provisioning existing username error = %v, want ErrUserExists", err)
+	}
+}
+
 func TestOIDCMCPConsentAndProvenance(t *testing.T) {
 	f := newOIDCFixture(t)
 	f.update(t, func(c *OIDCConfig) { c.AutoCreate = true })

@@ -81,6 +81,7 @@ func TestRouterRBACMatrixWithAdminAndRequesterTokens(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/admin/users"},
+		{http.MethodGet, "/api/admin/identity-provisioning"},
 		{http.MethodGet, "/api/admin/credentials"},
 		{http.MethodGet, "/api/admin/ai-tools"},
 		{http.MethodGet, "/api/admin/requests"},

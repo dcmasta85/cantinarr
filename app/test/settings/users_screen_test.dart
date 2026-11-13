@@ -65,6 +65,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Child'), findsOneWidget);
+    expect(find.text('Create SSO user'), findsOneWidget);
     expect(find.text('living-room'), findsOneWidget);
     expect(find.text('parent'), findsOneWidget);
   });

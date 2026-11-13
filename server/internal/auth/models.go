@@ -91,11 +91,12 @@ type Device struct {
 }
 
 type ConnectToken struct {
-	Token      string     `json:"token"`
-	UserID     int64      `json:"user_id"`
-	CreatedBy  int64      `json:"created_by"`
-	ExpiresAt  time.Time  `json:"expires_at"`
-	RedeemedAt *time.Time `json:"redeemed_at,omitempty"`
+	Token       string     `json:"token"`
+	UserID      int64      `json:"user_id"`
+	CreatedBy   int64      `json:"created_by"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	RedeemedAt  *time.Time `json:"redeemed_at,omitempty"`
+	RequireOIDC bool       `json:"-"`
 }
 
 type LoginRequest struct {

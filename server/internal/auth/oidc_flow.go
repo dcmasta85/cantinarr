@@ -432,7 +432,7 @@ func (s *Service) exchangeOIDC(code, verifier, flow string) (any, error) {
 
 func (s *Service) oidcInvitation(token string) (*ConnectToken, error) {
 	var ct ConnectToken
-	err := s.db.QueryRow("SELECT token,user_id,created_by,expires_at,redeemed_at FROM connect_tokens WHERE token=?", token).Scan(&ct.Token, &ct.UserID, &ct.CreatedBy, &ct.ExpiresAt, &ct.RedeemedAt)
+	err := s.db.QueryRow("SELECT token,user_id,created_by,expires_at,redeemed_at,require_oidc FROM connect_tokens WHERE token=?", token).Scan(&ct.Token, &ct.UserID, &ct.CreatedBy, &ct.ExpiresAt, &ct.RedeemedAt, &ct.RequireOIDC)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrTokenNotFound
 	}

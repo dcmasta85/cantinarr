@@ -478,7 +478,8 @@ CREATE TABLE IF NOT EXISTS connect_tokens (
     user_id INTEGER NOT NULL REFERENCES users(id),
     created_by INTEGER NOT NULL REFERENCES users(id),
     expires_at DATETIME NOT NULL,
-    redeemed_at DATETIME
+    redeemed_at DATETIME,
+    require_oidc BOOLEAN NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -1306,6 +1307,10 @@ func Open(dbPath string) (*sql.DB, error) {
 		// verification/device flow cannot replace a newer connection or deletion.
 		{alter: "ALTER TABLE service_instances ADD COLUMN hardcover_revision INTEGER NOT NULL DEFAULT 0"},
 		{alter: "ALTER TABLE discord_availability ADD COLUMN observed_key TEXT NOT NULL DEFAULT ''"},
+		// Some new-user connect links must bind the recipient's first OIDC
+		// identity to the invited Cantinarr account instead of redeeming as a
+		// local session and later auto-creating a duplicate SSO account.
+		{alter: "ALTER TABLE connect_tokens ADD COLUMN require_oidc BOOLEAN NOT NULL DEFAULT 0"},
 	}
 	for _, m := range migrations {
 		if err := applySchemaMigration(db, m); err != nil {
